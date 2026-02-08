@@ -96,11 +96,11 @@ contract Strategy is AMMStrategyBase {
 
         uint256 skewStrength;
         if (inRecovery) {
+            skewStrength = wmul(skew, bpsToWad(4500));
+            if (skewStrength > bpsToWad(160)) skewStrength = bpsToWad(160);
+        } else {
             skewStrength = wmul(skew, bpsToWad(4000));
             if (skewStrength > bpsToWad(90)) skewStrength = bpsToWad(90);
-        } else {
-            skewStrength = wmul(skew, bpsToWad(2500));
-            if (skewStrength > bpsToWad(60)) skewStrength = bpsToWad(60);
         }
 
         // Reversed skew: attract rebalancing flow
