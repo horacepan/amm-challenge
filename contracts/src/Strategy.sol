@@ -4,7 +4,12 @@ import {AMMStrategyBase} from "./AMMStrategyBase.sol";
 import {TradeInfo} from "./IAMMStrategy.sol";
 
 contract Strategy is AMMStrategyBase {
-    // VolBoost-RevSkew-Cubic-Hyst: 500.88 edge at 35 sims
+    // VolBoost-RevSkew-Cubic-Hyst v2: 502.33 edge at 35 sims
+    //
+    // Changes from v1 (500.88):
+    // - Tighter hysteresis: enter recovery at 0.6% (was 1%), exit at 0.2% (was 0.3%)
+    // - Stronger recovery: 5000 bps mult / 100 bps cap (was 4000/90)
+    // - Same cubic curve, same reversed skew, same vol boost
     //
     // Slot map:
     // 0: last timestamp
@@ -70,22 +75,22 @@ contract Strategy is AMMStrategyBase {
         uint256 diff = spot > spotEma ? (spot - spotEma) : (spotEma - spot);
         uint256 skew = spotEma > 0 ? wdiv(diff, spotEma) : 0;
 
-        // Hysteresis: enter recovery at 1% drift, exit at 0.3%
+        // Hysteresis: enter recovery at 0.6% drift, exit at 0.2%
         bool inRecovery = slots[5] > 0;
-        if (skew > WAD / 100) {
+        if (skew > WAD * 6 / 1000) {
             slots[5] = WAD;
             inRecovery = true;
-        } else if (skew < WAD * 3 / 1000) {
+        } else if (skew < WAD * 2 / 1000) {
             slots[5] = 0;
             inRecovery = false;
         }
 
         // Normal: 2500 bps mult, 60 bps cap
-        // Recovery: 4000 bps mult, 90 bps cap
+        // Recovery: 5000 bps mult, 100 bps cap
         uint256 skewStrength;
         if (inRecovery) {
-            skewStrength = wmul(skew, bpsToWad(4000));
-            if (skewStrength > bpsToWad(90)) skewStrength = bpsToWad(90);
+            skewStrength = wmul(skew, bpsToWad(5000));
+            if (skewStrength > bpsToWad(100)) skewStrength = bpsToWad(100);
         } else {
             skewStrength = wmul(skew, bpsToWad(2500));
             if (skewStrength > bpsToWad(60)) skewStrength = bpsToWad(60);
@@ -104,6 +109,6 @@ contract Strategy is AMMStrategyBase {
     }
 
     function getName() external pure override returns (string memory) {
-        return "VolBoost-RevSkew-Cubic-Hyst";
+        return "VolBoost-RevSkew-Cubic-Hyst-v2";
     }
 }
