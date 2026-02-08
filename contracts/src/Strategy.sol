@@ -4,22 +4,12 @@ import {AMMStrategyBase} from "./AMMStrategyBase.sol";
 import {TradeInfo} from "./IAMMStrategy.sol";
 
 contract Strategy is AMMStrategyBase {
-    // VolBoost-RevSkew-Cubic-Hyst: 500.88 edge at 35 sims
-    //
-    // Building blocks:
-    // 1. Cumulative impact with conditional decay (regime signal)
-    // 2. Slow EMA floor (prevents fee cratering)
-    // 3. Impact volatility (detects choppiness)
-    // 4. Cubic fee curve (gentler at low signal, steeper at high)
-    // 5. Reversed spot-skew (attract rebalancing flow)
-    // 6. Hysteresis skew regime (sticky "recovery mode" for large inventory drift)
-    //
     // Slot map:
     // 0: last timestamp
     // 1: cumulative decaying impact
     // 2: slow EMA floor
-    // 3: m1 EMA(impact)
-    // 4: m2 EMA(impact^2)
+    // 3: EMA(impact)
+    // 4: EMA(impact^2)
     // 5: recovery mode flag (0 = normal, WAD = recovery)
     // 6: spotEMA
 
@@ -36,16 +26,21 @@ contract Strategy is AMMStrategyBase {
     {
         uint256 impact = wdiv(trade.amountY, trade.reserveY);
 
-        // Cumulative impact with conditional decay
+        // Cumulative impact with regime-aware decay
         if (trade.timestamp != slots[0]) {
             slots[0] = trade.timestamp;
-            uint256 carry = slots[1] < WAD / 200 ? WAD * 33 / 100 : WAD * 45 / 100;
+            uint256 carry;
+            if (slots[5] > 0) {
+                carry = WAD * 50 / 100;  // recovery: retain more memory
+            } else {
+                carry = slots[1] < WAD / 200 ? WAD * 33 / 100 : WAD * 45 / 100;
+            }
             slots[1] = wmul(slots[1], carry) + impact;
         } else {
             slots[1] = slots[1] + impact;
         }
 
-        // Slow EMA floor
+        // Slow EMA floor (7% alpha)
         slots[2] = wmul(slots[2], WAD * 93 / 100) + wmul(impact, WAD * 7 / 100);
 
         // Impact volatility
@@ -56,17 +51,17 @@ contract Strategy is AMMStrategyBase {
         uint256 variance = slots[4] > m1sq ? slots[4] - m1sq : 0;
         uint256 vol = sqrt(variance * WAD);
 
-        // Signal: max(regime, floor) + vol boost
+        // Signal: max(cumImpact, floor) + vol boost
         uint256 signal = slots[1] > slots[2] ? slots[1] : slots[2];
-        uint256 boostedSignal = signal + wmul(vol, WAD * 20 / 100);
+        uint256 s = signal + wmul(vol, WAD * 20 / 100);
 
         // Cubic fee curve
-        uint256 sig2 = wmul(boostedSignal, boostedSignal);
-        uint256 sig3 = wmul(sig2, boostedSignal);
+        uint256 s2 = wmul(s, s);
+        uint256 s3 = wmul(s2, s);
         uint256 center = bpsToWad(18)
-            + wmul(boostedSignal, bpsToWad(6000))
-            + wmul(sig2, bpsToWad(80000))
-            + wmul(sig3, bpsToWad(180000));
+            + wmul(s, bpsToWad(6000))
+            + wmul(s2, bpsToWad(80000))
+            + wmul(s3, bpsToWad(180000));
         center = clampFee(center);
 
         // Spot EMA (3% alpha)
@@ -88,8 +83,6 @@ contract Strategy is AMMStrategyBase {
             inRecovery = false;
         }
 
-        // Normal: 2500 bps mult, 60 bps cap
-        // Recovery: 4000 bps mult, 90 bps cap (stronger skew to attract rebalancing)
         uint256 skewStrength;
         if (inRecovery) {
             skewStrength = wmul(skew, bpsToWad(4000));
@@ -112,6 +105,6 @@ contract Strategy is AMMStrategyBase {
     }
 
     function getName() external pure override returns (string memory) {
-        return "VolBoost-RevSkew-Cubic-Hyst";
+        return "CondCum-Cubic-RevSkew-Hyst";
     }
 }
