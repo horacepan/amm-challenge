@@ -58,7 +58,7 @@ contract Strategy is AMMStrategyBase {
         // Cubic fee curve
         uint256 s2 = wmul(s, s);
         uint256 s3 = wmul(s2, s);
-        uint256 center = bpsToWad(18)
+        uint256 center = bpsToWad(19)
             + wmul(s, bpsToWad(6000))
             + wmul(s2, bpsToWad(80000))
             + wmul(s3, bpsToWad(180000));
