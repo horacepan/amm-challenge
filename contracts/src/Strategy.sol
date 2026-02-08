@@ -12,6 +12,8 @@ contract Strategy is AMMStrategyBase {
     // 4: EMA(impact^2)
     // 5: recovery mode flag (0 = normal, WAD = recovery)
     // 6: spotEMA
+    // 7: first impact of current step
+    // 8: trade count in current step
 
     function afterInitialize(uint256 initialX, uint256 initialY)
         external override returns (uint256, uint256)
@@ -36,8 +38,11 @@ contract Strategy is AMMStrategyBase {
                 carry = slots[1] < WAD / 200 ? WAD * 33 / 100 : WAD * 45 / 100;
             }
             slots[1] = wmul(slots[1], carry) + impact;
+            slots[7] = impact;  // record first impact of step
+            slots[8] = 1;
         } else {
             slots[1] = slots[1] + impact;
+            slots[8] = slots[8] + 1;
         }
 
         // Slow EMA floor (7% alpha)
@@ -63,6 +68,12 @@ contract Strategy is AMMStrategyBase {
             + wmul(s2, bpsToWad(80000))
             + wmul(s3, bpsToWad(180000));
         center = clampFee(center);
+
+        // Harvest discount: reduce fees after 2+ trades if step started with large impact
+        if (slots[8] > 1) {  // from 2nd trade onwards
+            uint256 discount = wmul(slots[7], bpsToWad(3500));  // 35% of first impact
+            center = center > discount ? center - discount : 0;
+        }
 
         // Spot EMA (3% alpha)
         uint256 spot = wdiv(trade.reserveY, trade.reserveX);
