@@ -16,10 +16,18 @@ contract Strategy is AMMStrategyBase {
         } else {
             slots[1] = slots[1] + impact;
         }
-        slots[2] = wmul(slots[2], WAD * 93 / 100) + wmul(impact, WAD * (100 - 93) / 100);
+        slots[2] = wmul(slots[2], WAD * 93 / 100) + wmul(impact, WAD * 7 / 100);
+        // Impact volatility: m1=EMA(impact), m2=EMA(impact^2), vol=sqrt(m2-m1^2)
+        uint256 alpha = WAD * 50 / 100;
+        slots[3] = wmul(slots[3], WAD - alpha) + wmul(impact, alpha);
+        slots[4] = wmul(slots[4], WAD - alpha) + wmul(wmul(impact, impact), alpha);
+        uint256 m1sq = wmul(slots[3], slots[3]);
+        uint256 variance = slots[4] > m1sq ? slots[4] - m1sq : 0;
+        uint256 vol = sqrt(variance * WAD);
         uint256 signal = slots[1] > slots[2] ? slots[1] : slots[2];
-        uint256 fee = bpsToWad(20) + wmul(signal, bpsToWad(9500)) + wmul(wmul(signal, signal), bpsToWad(65000));
+        uint256 boostedSignal = signal + wmul(vol, WAD * 20 / 100);
+        uint256 fee = bpsToWad(20) + wmul(boostedSignal, bpsToWad(9500)) + wmul(wmul(boostedSignal, boostedSignal), bpsToWad(65000));
         return (clampFee(fee), clampFee(fee));
     }
-    function getName() external pure override returns (string memory) { return "CondEMA"; }
+    function getName() external pure override returns (string memory) { return "VolBoost"; }
 }
