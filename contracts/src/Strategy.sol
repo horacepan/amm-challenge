@@ -84,9 +84,9 @@ contract Strategy is AMMStrategyBase {
         uint256 diff = spot > spotEma ? (spot - spotEma) : (spotEma - spot);
         uint256 skew = spotEma > 0 ? wdiv(diff, spotEma) : 0;
 
-        // Hysteresis: enter recovery at 1% drift, exit at 0.3%
+        // Hysteresis: enter recovery at 0.7% drift, exit at 0.3%
         bool inRecovery = slots[5] > 0;
-        if (skew > WAD / 100) {
+        if (skew > WAD * 7 / 1000) {
             slots[5] = WAD;
             inRecovery = true;
         } else if (skew < WAD * 3 / 1000) {
