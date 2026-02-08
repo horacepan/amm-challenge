@@ -4,29 +4,19 @@ import {AMMStrategyBase} from "./AMMStrategyBase.sol";
 import {TradeInfo} from "./IAMMStrategy.sol";
 
 contract Strategy is AMMStrategyBase {
-    // VolBoost-RevSkew-Cubic: 493.04 edge at 35 sims (+23.58 over VolBoost)
-    //
-    // Improvements over VolBoost (469.46):
-    // 1. Reversed spot-skew: asymmetric bid/ask fees that attract rebalancing flow
-    //    When spot deviates from its EMA, lower fees in the direction that attracts
-    //    retail/rebalancing and raise fees in the toxic direction.
-    // 2. Cubic fee curve: better captures the convexity of optimal fees.
-    //    Lower linear term, higher quad+cubic means gentler fees at low signal
-    //    but much steeper escalation at high signal.
+    // VolBoost-RevSkew-Cubic-Hyst: 500.88 edge at 35 sims
     //
     // Slot map:
-    // 0: last timestamp (step detection)
-    // 1: cumulative decaying impact (regime signal)
-    // 2: slow EMA floor of impact
-    // 3: m1 EMA(impact) for variance
-    // 4: m2 EMA(impact^2) for variance
-    // 5: (unused)
-    // 6: spotEMA (reserveY/reserveX anchor)
+    // 0: last timestamp
+    // 1: cumulative decaying impact
+    // 2: slow EMA floor
+    // 3: m1 EMA(impact)
+    // 4: m2 EMA(impact^2)
+    // 5: recovery mode flag (0 = normal, WAD = recovery)
+    // 6: spotEMA
 
     function afterInitialize(uint256 initialX, uint256 initialY)
-        external
-        override
-        returns (uint256, uint256)
+        external override returns (uint256, uint256)
     {
         slots[2] = WAD / 200;
         slots[6] = wdiv(initialY, initialX);
@@ -34,9 +24,7 @@ contract Strategy is AMMStrategyBase {
     }
 
     function afterSwap(TradeInfo calldata trade)
-        external
-        override
-        returns (uint256 bidFee, uint256 askFee)
+        external override returns (uint256 bidFee, uint256 askFee)
     {
         uint256 impact = wdiv(trade.amountY, trade.reserveY);
 
@@ -64,7 +52,7 @@ contract Strategy is AMMStrategyBase {
         uint256 signal = slots[1] > slots[2] ? slots[1] : slots[2];
         uint256 boostedSignal = signal + wmul(vol, WAD * 20 / 100);
 
-        // Cubic fee curve: base + linear + quad + cubic
+        // Cubic fee curve
         uint256 sig2 = wmul(boostedSignal, boostedSignal);
         uint256 sig3 = wmul(sig2, boostedSignal);
         uint256 center = bpsToWad(18)
@@ -73,7 +61,7 @@ contract Strategy is AMMStrategyBase {
             + wmul(sig3, bpsToWad(180000));
         center = clampFee(center);
 
-        // Spot EMA for skew detection (3% alpha)
+        // Spot EMA (3% alpha)
         uint256 spot = wdiv(trade.reserveY, trade.reserveX);
         slots[6] = wmul(slots[6], WAD * 97 / 100) + wmul(spot, WAD * 3 / 100);
         uint256 spotEma = slots[6];
@@ -82,10 +70,28 @@ contract Strategy is AMMStrategyBase {
         uint256 diff = spot > spotEma ? (spot - spotEma) : (spotEma - spot);
         uint256 skew = spotEma > 0 ? wdiv(diff, spotEma) : 0;
 
-        // Reversed skew: attract rebalancing flow
-        uint256 skewStrength = wmul(skew, bpsToWad(2500));
-        if (skewStrength > bpsToWad(60)) skewStrength = bpsToWad(60);
+        // Hysteresis: enter recovery at 1% drift, exit at 0.3%
+        bool inRecovery = slots[5] > 0;
+        if (skew > WAD / 100) {
+            slots[5] = WAD;
+            inRecovery = true;
+        } else if (skew < WAD * 3 / 1000) {
+            slots[5] = 0;
+            inRecovery = false;
+        }
 
+        // Normal: 2500 bps mult, 60 bps cap
+        // Recovery: 4000 bps mult, 90 bps cap
+        uint256 skewStrength;
+        if (inRecovery) {
+            skewStrength = wmul(skew, bpsToWad(4000));
+            if (skewStrength > bpsToWad(90)) skewStrength = bpsToWad(90);
+        } else {
+            skewStrength = wmul(skew, bpsToWad(2500));
+            if (skewStrength > bpsToWad(60)) skewStrength = bpsToWad(60);
+        }
+
+        // Reversed skew: attract rebalancing flow
         if (spot > spotEma) {
             bidFee = clampFee(center + skewStrength);
             askFee = clampFee(center > skewStrength ? center - skewStrength : 0);
@@ -98,6 +104,6 @@ contract Strategy is AMMStrategyBase {
     }
 
     function getName() external pure override returns (string memory) {
-        return "VolBoost-RevSkew-Cubic";
+        return "VolBoost-RevSkew-Cubic-Hyst";
     }
 }
