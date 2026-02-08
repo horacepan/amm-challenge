@@ -4,12 +4,12 @@ import {AMMStrategyBase} from "./AMMStrategyBase.sol";
 import {TradeInfo} from "./IAMMStrategy.sol";
 
 contract Strategy is AMMStrategyBase {
-    // VolBoost-RevSkew-Cubic-Hyst v2: 502.33 edge at 35 sims
+    // VolBoost-RevSkew-Cubic-Hyst v3 (PressRecov): 502.74 edge at 35 sims
     //
-    // Changes from v1 (500.88):
-    // - Tighter hysteresis: enter recovery at 0.6% (was 1%), exit at 0.2% (was 0.3%)
-    // - Stronger recovery: 5000 bps mult / 100 bps cap (was 4000/90)
-    // - Same cubic curve, same reversed skew, same vol boost
+    // Changes from v2 (502.33):
+    // - Added signed pressure EMA (slot 7=prevSpot, slot 8=pressure)
+    // - When in recovery + persistent one-way flow aligned with deviation,
+    //   amplifies skew to 5500 bps mult / 110 bps cap (vs default 5000/100)
     //
     // Slot map:
     // 0: last timestamp
@@ -19,12 +19,17 @@ contract Strategy is AMMStrategyBase {
     // 4: m2 EMA(impact^2)
     // 5: recovery mode flag (0 = normal, WAD = recovery)
     // 6: spotEMA
+    // 7: previous spot price
+    // 8: signed pressure EMA (biased at WAD; >WAD = upward, <WAD = downward)
 
     function afterInitialize(uint256 initialX, uint256 initialY)
         external override returns (uint256, uint256)
     {
         slots[2] = WAD / 200;
-        slots[6] = wdiv(initialY, initialX);
+        uint256 initSpot = wdiv(initialY, initialX);
+        slots[6] = initSpot;
+        slots[7] = initSpot;
+        slots[8] = WAD;
         return (bpsToWad(30), bpsToWad(30));
     }
 
@@ -46,12 +51,20 @@ contract Strategy is AMMStrategyBase {
         slots[2] = wmul(slots[2], WAD * 93 / 100) + wmul(impact, WAD * 7 / 100);
 
         // Impact volatility
-        uint256 alpha = WAD * 50 / 100;
+        uint256 alpha = WAD / 2;
         slots[3] = wmul(slots[3], WAD - alpha) + wmul(impact, alpha);
         slots[4] = wmul(slots[4], WAD - alpha) + wmul(wmul(impact, impact), alpha);
         uint256 m1sq = wmul(slots[3], slots[3]);
         uint256 variance = slots[4] > m1sq ? slots[4] - m1sq : 0;
         uint256 vol = sqrt(variance * WAD);
+
+        // Signed pressure EMA: tracks persistent directional flow
+        uint256 spot = wdiv(trade.reserveY, trade.reserveX);
+        uint256 prevSpot = slots[7];
+        slots[7] = spot;
+        uint256 pA = WAD * 20 / 100;
+        slots[8] = wmul(slots[8], WAD - pA) + wmul(spot > prevSpot ? WAD + impact : WAD - impact, pA);
+        uint256 absPressure = slots[8] > WAD ? slots[8] - WAD : WAD - slots[8];
 
         // Signal: max(regime, floor) + vol boost
         uint256 signal = slots[1] > slots[2] ? slots[1] : slots[2];
@@ -67,7 +80,6 @@ contract Strategy is AMMStrategyBase {
         center = clampFee(center);
 
         // Spot EMA (3% alpha)
-        uint256 spot = wdiv(trade.reserveY, trade.reserveX);
         slots[6] = wmul(slots[6], WAD * 97 / 100) + wmul(spot, WAD * 3 / 100);
         uint256 spotEma = slots[6];
 
@@ -85,12 +97,22 @@ contract Strategy is AMMStrategyBase {
             inRecovery = false;
         }
 
-        // Normal: 2500 bps mult, 60 bps cap
-        // Recovery: 5000 bps mult, 100 bps cap
+        // Pressure alignment: flow direction matches price deviation
+        bool pressAligned = (spot > spotEma && slots[8] > WAD)
+            || (spot < spotEma && slots[8] < WAD);
+
+        // Recovery: 5000/100 default, 5500/110 when pressure-aligned
+        // Normal: 2500/60
         uint256 skewStrength;
         if (inRecovery) {
-            skewStrength = wmul(skew, bpsToWad(5000));
-            if (skewStrength > bpsToWad(100)) skewStrength = bpsToWad(100);
+            uint256 mult = bpsToWad(5000);
+            uint256 cap = bpsToWad(100);
+            if (pressAligned && absPressure > WAD / 500) {
+                mult = bpsToWad(5500);
+                cap = bpsToWad(110);
+            }
+            skewStrength = wmul(skew, mult);
+            if (skewStrength > cap) skewStrength = cap;
         } else {
             skewStrength = wmul(skew, bpsToWad(2500));
             if (skewStrength > bpsToWad(60)) skewStrength = bpsToWad(60);
@@ -109,6 +131,6 @@ contract Strategy is AMMStrategyBase {
     }
 
     function getName() external pure override returns (string memory) {
-        return "VolBoost-RevSkew-Cubic-Hyst-v2";
+        return "VolBoost-RevSkew-Cubic-Hyst-v3";
     }
 }
