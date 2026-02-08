@@ -4,12 +4,11 @@ import {AMMStrategyBase} from "./AMMStrategyBase.sol";
 import {TradeInfo} from "./IAMMStrategy.sol";
 
 contract Strategy is AMMStrategyBase {
-    // VolBoost-RevSkew-Cubic-Hyst v3 (PressRecov): 502.74 edge at 35 sims
+    // VolBoost-RevSkew-Cubic-Hyst v4 (HighCap): 503.47 edge at 35 sims
     //
-    // Changes from v2 (502.33):
-    // - Added signed pressure EMA (slot 7=prevSpot, slot 8=pressure)
-    // - When in recovery + persistent one-way flow aligned with deviation,
-    //   amplifies skew to 5500 bps mult / 110 bps cap (vs default 5000/100)
+    // Changes from v3 (502.74):
+    // - Raised recovery skew cap from 100 to 130 bps (140 when pressure-aligned)
+    //   allowing stronger tilt when deeply offside
     //
     // Slot map:
     // 0: last timestamp
@@ -101,15 +100,15 @@ contract Strategy is AMMStrategyBase {
         bool pressAligned = (spot > spotEma && slots[8] > WAD)
             || (spot < spotEma && slots[8] < WAD);
 
-        // Recovery: 5000/100 default, 5500/110 when pressure-aligned
+        // Recovery: 5000/130 default, 5500/140 when pressure-aligned
         // Normal: 2500/60
         uint256 skewStrength;
         if (inRecovery) {
             uint256 mult = bpsToWad(5000);
-            uint256 cap = bpsToWad(100);
+            uint256 cap = bpsToWad(130);
             if (pressAligned && absPressure > WAD / 500) {
                 mult = bpsToWad(5500);
-                cap = bpsToWad(110);
+                cap = bpsToWad(140);
             }
             skewStrength = wmul(skew, mult);
             if (skewStrength > cap) skewStrength = cap;
@@ -131,6 +130,6 @@ contract Strategy is AMMStrategyBase {
     }
 
     function getName() external pure override returns (string memory) {
-        return "VolBoost-RevSkew-Cubic-Hyst-v3";
+        return "VolBoost-RevSkew-Cubic-Hyst-v4";
     }
 }
