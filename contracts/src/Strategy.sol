@@ -8,8 +8,6 @@ contract Strategy is AMMStrategyBase {
     // 0: last timestamp
     // 1: cumulative decaying impact
     // 2: slow EMA floor
-    // 3: EMA(impact)
-    // 4: EMA(impact^2)
     // 5: recovery mode flag (0 = normal, WAD = recovery)
     // 6: spotEMA
     // 7: first impact of current step
@@ -33,9 +31,9 @@ contract Strategy is AMMStrategyBase {
             slots[0] = trade.timestamp;
             uint256 carry;
             if (slots[5] > 0) {
-                carry = WAD * 50 / 100;  // recovery: retain more memory
+                carry = WAD * 55 / 100;  // recovery: retain more memory
             } else {
-                carry = slots[1] < WAD / 200 ? WAD * 33 / 100 : WAD * 45 / 100;
+                carry = slots[1] < WAD / 200 ? WAD * 20 / 100 : WAD * 45 / 100;
             }
             slots[1] = wmul(slots[1], carry) + impact;
             slots[7] = impact;  // record first impact of step
@@ -45,59 +43,50 @@ contract Strategy is AMMStrategyBase {
             slots[8] = slots[8] + 1;
         }
 
-        // Slow EMA floor (7% alpha)
-        slots[2] = wmul(slots[2], WAD * 93 / 100) + wmul(impact, WAD * 7 / 100);
+        // Slow EMA floor (1% alpha)
+        slots[2] = wmul(slots[2], WAD * 99 / 100) + wmul(impact, WAD * 1 / 100);
 
-        // Impact volatility
-        uint256 alpha = WAD * 50 / 100;
-        slots[3] = wmul(slots[3], WAD - alpha) + wmul(impact, alpha);
-        slots[4] = wmul(slots[4], WAD - alpha) + wmul(wmul(impact, impact), alpha);
-        uint256 m1sq = wmul(slots[3], slots[3]);
-        uint256 variance = slots[4] > m1sq ? slots[4] - m1sq : 0;
-        uint256 vol = sqrt(variance * WAD);
-
-        // Signal: max(cumImpact, floor) + vol boost
-        uint256 signal = slots[1] > slots[2] ? slots[1] : slots[2];
-        uint256 s = signal + wmul(vol, WAD * 20 / 100);
+        // Signal: max(cumImpact, floor)
+        uint256 s = slots[1] > slots[2] ? slots[1] : slots[2];
 
         // Cubic fee curve
         uint256 s2 = wmul(s, s);
         uint256 s3 = wmul(s2, s);
-        uint256 center = bpsToWad(19)
-            + wmul(s, bpsToWad(6000))
-            + wmul(s2, bpsToWad(80000))
-            + wmul(s3, bpsToWad(180000));
+        uint256 center = bpsToWad(21)
+            + wmul(s, bpsToWad(5000))
+            + wmul(s2, bpsToWad(40000))
+            + wmul(s3, bpsToWad(100000));
         center = clampFee(center);
 
         // Harvest discount: reduce fees after 2+ trades if step started with large impact
         if (slots[8] > 1) {  // from 2nd trade onwards
-            uint256 discount = wmul(slots[7], bpsToWad(3500));  // 35% of first impact
+            uint256 discount = wmul(slots[7], bpsToWad(1500));  // 15% of first impact
             center = center > discount ? center - discount : 0;
         }
 
-        // Spot EMA (3% alpha)
+        // Spot EMA (2% alpha)
         uint256 spot = wdiv(trade.reserveY, trade.reserveX);
-        slots[6] = wmul(slots[6], WAD * 97 / 100) + wmul(spot, WAD * 3 / 100);
+        slots[6] = wmul(slots[6], WAD * 98 / 100) + wmul(spot, WAD * 2 / 100);
         uint256 spotEma = slots[6];
 
         // Skew = |spot - spotEMA| / spotEMA
         uint256 diff = spot > spotEma ? (spot - spotEma) : (spotEma - spot);
         uint256 skew = spotEma > 0 ? wdiv(diff, spotEma) : 0;
 
-        // Hysteresis: enter recovery at 0.7% drift, exit at 0.3%
+        // Hysteresis: enter recovery at 2.5% drift, exit at 0.5%
         bool inRecovery = slots[5] > 0;
-        if (skew > WAD * 7 / 1000) {
+        if (skew > WAD * 25 / 1000) {
             slots[5] = WAD;
             inRecovery = true;
-        } else if (skew < WAD * 3 / 1000) {
+        } else if (skew < WAD * 5 / 1000) {
             slots[5] = 0;
             inRecovery = false;
         }
 
         uint256 skewStrength;
         if (inRecovery) {
-            skewStrength = wmul(skew, bpsToWad(4500));
-            if (skewStrength > bpsToWad(160)) skewStrength = bpsToWad(160);
+            skewStrength = wmul(skew, bpsToWad(5000));
+            if (skewStrength > bpsToWad(1000)) skewStrength = bpsToWad(1000);
         } else {
             skewStrength = wmul(skew, bpsToWad(4000));
             if (skewStrength > bpsToWad(90)) skewStrength = bpsToWad(90);
