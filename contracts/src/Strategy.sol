@@ -111,25 +111,12 @@ contract Strategy is AMMStrategyBase {
             askFee = clampFee(center + skewStrength);
         }
 
-        // Stale direction shift
-        uint256 staleShift = wmul(bpsToWad(2000), tox);
-        uint256 attractFrac = WAD * 80 / 100;
-        if (spot > pHat) {
-            bidFee = clampFee(bidFee + staleShift);
-            uint256 attract = wmul(staleShift, attractFrac);
-            askFee = askFee > attract ? askFee - attract : 0;
-        } else {
-            askFee = clampFee(askFee + staleShift);
-            uint256 attract = wmul(staleShift, attractFrac);
-            bidFee = bidFee > attract ? bidFee - attract : 0;
-        }
-
         slots[9] = bidFee;
         slots[10] = askFee;
         return (bidFee, askFee);
     }
 
     function getName() external pure override returns (string memory) {
-        return "Sweep";
+        return "ToxSkew-v2";
     }
 }
