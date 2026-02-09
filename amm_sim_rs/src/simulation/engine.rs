@@ -108,10 +108,16 @@ impl SimulationEngine {
             (amm_baseline.reserves().0, amm_baseline.reserves().1),
         );
 
-        // Track edge per strategy
+        // Track edge per strategy (total, arb, retail)
         let mut edges: HashMap<String, f64> = HashMap::new();
+        let mut arb_edges: HashMap<String, f64> = HashMap::new();
+        let mut retail_edges: HashMap<String, f64> = HashMap::new();
         edges.insert(submission_name.clone(), 0.0);
         edges.insert(baseline_name.clone(), 0.0);
+        arb_edges.insert(submission_name.clone(), 0.0);
+        arb_edges.insert(baseline_name.clone(), 0.0);
+        retail_edges.insert(submission_name.clone(), 0.0);
+        retail_edges.insert(baseline_name.clone(), 0.0);
 
         // Run simulation steps
         let mut steps = Vec::with_capacity(self.config.n_steps as usize);
@@ -141,9 +147,9 @@ impl SimulationEngine {
             for amm in amms.iter_mut() {
                 if let Some(arb_result) = arbitrageur.execute_arb(amm, fair_price, t as u64) {
                     *arb_volume_y.get_mut(&arb_result.amm_name).unwrap() += arb_result.amount_y;
-                    let entry = edges.entry(arb_result.amm_name).or_insert(0.0);
-                    // AMM edge is the negative of arbitrageur profit at true price
-                    *entry += -arb_result.profit;
+                    let arb_edge = -arb_result.profit;
+                    *edges.entry(arb_result.amm_name.clone()).or_insert(0.0) += arb_edge;
+                    *arb_edges.entry(arb_result.amm_name).or_insert(0.0) += arb_edge;
                 }
             }
 
@@ -157,8 +163,8 @@ impl SimulationEngine {
                 } else {
                     trade.amount_y - trade.amount_x * fair_price
                 };
-                let entry = edges.entry(trade.amm_name).or_insert(0.0);
-                *entry += trade_edge;
+                *edges.entry(trade.amm_name.clone()).or_insert(0.0) += trade_edge;
+                *retail_edges.entry(trade.amm_name).or_insert(0.0) += trade_edge;
             }
 
             // 4. Capture step result and accumulate fees
@@ -209,6 +215,8 @@ impl SimulationEngine {
             strategies: vec![submission_name, baseline_name],
             pnl,
             edges,
+            arb_edges,
+            retail_edges,
             initial_fair_price,
             initial_reserves,
             steps,
