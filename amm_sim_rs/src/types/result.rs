@@ -58,6 +58,14 @@ pub struct LightweightSimResult {
     #[pyo3(get)]
     pub edges: HashMap<String, f64>,
 
+    /// Arb edge by strategy name (negative = loss to arbs)
+    #[pyo3(get)]
+    pub arb_edges: HashMap<String, f64>,
+
+    /// Retail edge by strategy name (positive = profit from retail)
+    #[pyo3(get)]
+    pub retail_edges: HashMap<String, f64>,
+
     /// Initial fair price
     #[pyo3(get)]
     pub initial_fair_price: f64,
